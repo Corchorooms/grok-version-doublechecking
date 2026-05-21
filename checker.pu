@@ -46,7 +46,7 @@ HISTORY_FILE = "bookings_history.json"
 
 EMAIL_CONFIG = {
     "sender": "corchorooms@gmail.com",
-    "password": os.getenv("GMAIL_APP_PASSWORD"),
+    "password": os.getenv("zuwl agah qcqf ysrr"),
     "recipient": "corchorooms@gmail.com",
 }
 # ========================================================
