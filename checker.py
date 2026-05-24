@@ -8,7 +8,6 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
-# ========================= CONFIG =========================
 ROOMS = {
     "Room 1": {
         "Airbnb": "https://www.airbnb.com/calendar/ical/694116191964099772.ics?t=7c5625fe49f74a60a59632bf6431ffea&locale=en-GB",
@@ -49,55 +48,106 @@ EMAIL_CONFIG = {
     "password": os.getenv("GMAIL_APP_PASSWORD"),
     "recipient": "corchorooms@gmail.com",
 }
-# ========================================================
 
-# ... [Rest of the code remains exactly the same as previous version] ...
+def load_history():
+    if os.path.exists(HISTORY_FILE):
+        try:
+            with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_history(history):
+    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+        json.dump(history, f, indent=2, ensure_ascii=False, default=str)
+
+def fetch_ical(url):
+    try:
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=20)
+        r.raise_for_status()
+        return Calendar.from_ical(r.text)
+    except:
+        return None
+
+def get_events(cal, room_name, platform):
+    events = []
+    if not cal:
+        return events
+    for component in cal.walk("VEVENT"):
+        try:
+            status = str(component.get('status', 'CONFIRMED')).upper()
+            if status == 'CANCELLED':
+                continue
+            start = component.get('dtstart').dt
+            end = component.get('dtend').dt
+            summary = str(component.get('summary', 'Booking'))
+            uid = str(component.get('uid', ''))
+            if not isinstance(start, datetime):
+                start = datetime.combine(start, datetime.min.time())
+            if not isinstance(end, datetime):
+                end = datetime.combine(end, datetime.min.time())
+            events.append({
+                'uid': uid,
+                'room': room_name,
+                'platform': platform,
+                'summary': summary,
+                'start': start,
+                'end': end,
+                'status': status
+            })
+        except:
+            continue
+    return events
+
+def find_overlaps(events):
+    overlaps = []
+    sorted_events = sorted(events, key=lambda x: x['start'])
+    for i in range(len(sorted_events)):
+        for j in range(i + 1, len(sorted_events)):
+            a = sorted_events[i]
+            b = sorted_events[j]
+            if a['end'] > b['start'] and a['start'] < b['end']:
+                overlaps.append((a, b))
+    return overlaps
 
 def send_alert(overlaps):
     if not overlaps:
         return
-
     msg = MIMEMultipart()
     msg['From'] = EMAIL_CONFIG["sender"]
     msg['To'] = EMAIL_CONFIG["recipient"]
     msg['Subject'] = f"🚨 DOUBLE BOOKING ALERT - {len(overlaps)} issue(s) found"
-
     body = "Double bookings detected!\n\n"
     for a, b in overlaps:
         body += f"Room: {a['room']}\n"
         body += f"• {a['platform']}: {a['summary']} ({a['start'].strftime('%Y-%m-%d')})\n"
         body += f"• {b['platform']}: {b['summary']} ({b['start'].strftime('%Y-%m-%d')})\n\n"
-
     msg.attach(MIMEText(body, 'plain'))
-
     try:
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
         server.login(EMAIL_CONFIG["sender"], EMAIL_CONFIG["password"])
         server.send_message(msg)
         server.quit()
-        print("✅ Alert email sent successfully!")
+        print("✅ Alert email sent!")
     except Exception as e:
         print(f"❌ Email failed: {e}")
 
-# ===================== MAIN =====================
 def main():
-    print(f"🔍 Double Booking + History Tracker started at {datetime.now()}")
-    
+    print(f"🔍 Starting check at {datetime.now()}")
     history = load_history()
     all_events = []
     new_bookings = 0
 
     for room_name, platforms in ROOMS.items():
-        print(f"\nChecking {room_name}...")
+        print(f"Checking {room_name}...")
         room_events = []
-        
         for platform, url in platforms.items():
             cal = fetch_ical(url)
             events = get_events(cal, room_name, platform)
             room_events.extend(events)
             all_events.extend(events)
-
             for event in events:
                 uid = event['uid']
                 if uid and uid not in history:
@@ -112,22 +162,19 @@ def main():
                         "first_seen": datetime.now().isoformat()
                     }
                     new_bookings += 1
-                    print(f"   ✅ New booking saved: {room_name} - {event['summary']}")
-
         overlaps = find_overlaps(room_events)
         if overlaps:
-            print(f"   ⚠️  {len(overlaps)} overlap(s) found in {room_name}")
+            print(f"   ⚠️ Overlaps found in {room_name}")
 
     global_overlaps = find_overlaps(all_events)
-    
     if global_overlaps:
-        print(f"🚨 Total double bookings found: {len(global_overlaps)}")
+        print(f"🚨 Double bookings found: {len(global_overlaps)}")
         send_alert(global_overlaps)
     else:
         print("✅ No double bookings found.")
 
     save_history(history)
-    print(f"📊 Total bookings in history: {len(history)} | New today: {new_bookings}")
+    print(f"Total bookings in history: {len(history)} | New: {new_bookings}")
 
 if __name__ == "__main__":
     main()
